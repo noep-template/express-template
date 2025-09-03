@@ -72,18 +72,46 @@ async function promptForOptions(current) {
 
 function ensureEnv(databaseUrl) {
   const envPath = join(process.cwd(), ".env");
+  // Lire le contenu existant (si présent)
   let content = existsSync(envPath) ? readFileSync(envPath, "utf8") : "";
-  if (content.includes("DATABASE_URL=")) {
-    content = content.replace(
-      /DATABASE_URL=.*/g,
-      `DATABASE_URL=${databaseUrl}`
-    );
-  } else {
-    if (content && !content.endsWith("\n")) content += "\n";
-    content += `DATABASE_URL=${databaseUrl}\n`;
+
+  // Transformer en objet clé=valeur tout en préservant les lignes inconnues
+  const lines = content.split(/\r?\n/).filter(() => true);
+  const kv = new Map();
+  const otherLines = [];
+  for (const line of lines) {
+    if (!line || line.trim().startsWith("#") || !line.includes("=")) {
+      otherLines.push(line);
+      continue;
+    }
+    const idx = line.indexOf("=");
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1);
+    kv.set(key, value);
   }
-  writeFileSync(envPath, content);
-  console.log(`.env mis à jour avec DATABASE_URL`);
+
+  // Mettre à jour/ajouter les variables nécessaires
+  kv.set("DATABASE_URL", databaseUrl);
+  if (!kv.has("PORT")) kv.set("PORT", "4000");
+
+  const defaultCorsOrigins = "http://localhost:5173,http://localhost:3000";
+  if (!kv.has("CORS_ORIGIN")) {
+    kv.set("CORS_ORIGIN", defaultCorsOrigins);
+  } else {
+    const currentCors = String(kv.get("CORS_ORIGIN") || "").trim();
+    if (currentCors === "") {
+      kv.set("CORS_ORIGIN", defaultCorsOrigins);
+    }
+  }
+
+  // Reconstruire le contenu: conserver lignes non KV, puis KV triées par clé (stable)
+  const kvLines = Array.from(kv.entries()).map(([k, v]) => `${k}=${v}`);
+  const next = [...otherLines.filter((l) => l !== undefined), ...kvLines]
+    .filter((l, i, arr) => !(l === "" && (i === 0 || arr[i - 1] === "")))
+    .join("\n");
+
+  writeFileSync(envPath, next.endsWith("\n") ? next : next + "\n");
+  console.log(`.env mis à jour avec DATABASE_URL, PORT et CORS_ORIGIN`);
 }
 
 function writePrismaSchema(db) {
